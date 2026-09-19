@@ -63,7 +63,25 @@ def build_chain() -> Any:
     ``deepseek-v4-flash-vision-exp``. The API key is loaded from .env.
     """
     ### YOUR CODE HERE
-    return None
+    from langchain_core.prompts import ChatPromptTemplate
+    from langchain_deepseek import ChatDeepSeek
+
+    prompt_text = ('列出这张小票上的最终支付额、小计、所有折扣额、四舍五入额和商品明细。以json格式输出，不要遗漏任何一行，不要有任何前后解释文字，所有折扣额取正数部分、四舍五入额保留原符号。'
+              '输出样例：{ \"final_amount\": \"123.40\", \"subtotal\": \"150.00\", \"discounts\": [\"26.60\"], \"rounding\": \"0.01\", \"items\": [{\"code\": \"001\", \"name\": \"商品1\", \"quantity\": 2, \"amount\": \"10.00\"}] }')
+    model = ChatDeepSeek(
+        model="deepseek-v4-flash-vision-exp",
+        temperature=0,
+        timeout=120,
+    )
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("human", [
+            {"type": "text", "text": "{instructions}"},
+            {"type": "image_url", "image_url": {"url": "{receipt}"}},
+        ]),
+    ]).partial(instructions=prompt_text)
+
+    return prompt | model
 
 
 def answer_queries(chain: Any, images: list[Path]) -> dict[str, Any]:
@@ -79,8 +97,39 @@ def answer_queries(chain: Any, images: list[Path]) -> dict[str, Any]:
     to process independent receipt-extraction prompts in parallel.
     """
     ### YOUR CODE HERE
-    _ = (chain, images)
-    return {QUERY_1: DUMMY_RESPONSE, QUERY_2: DUMMY_RESPONSE}
+    def money(value):
+        return Decimal(str(value))
+
+    # ① 每张图变成一次调用的输入
+    inputs = [{"receipt": image_data_url(path)} for path in images]
+
+    # ② 并行跑（7 张图 → 7 次请求，最多同时 4 个）
+    results = chain.batch(inputs, config={"max_concurrency": 4})
+
+    # ③ 逐张解析并累加
+    total_paid = Decimal("0")  # 回答 QUERY_1 用
+    total_without_discount = Decimal("0")  # 回答 QUERY_2 用
+
+    for result in results:
+        try:
+            data = json.loads(response_text(result))
+        except Exception:
+            continue
+
+        # 取出 data 里的 subtotal、final_amount、discounts
+        subtotal = money(data["subtotal"])
+        final_amount = money(data["final_amount"])
+        discounts = [money(d) for d in data["discounts"]]
+
+        # 计算账单花销、不打折花销
+        total_paid += final_amount
+        total_without_discount += subtotal + sum(discounts)
+
+    # ④ 返回
+    return {
+        QUERY_1: f"HK${total_paid:.2f}",
+        QUERY_2: f"HK${total_without_discount:.2f}",
+    }
 
 
 # Everything below is provided runner/scoring code. No edits are needed.
