@@ -66,7 +66,12 @@ def build_chain() -> Any:
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_deepseek import ChatDeepSeek
 
-    prompt_text = ('列出这张小票上的最终支付额、小计、所有折扣额、四舍五入额和商品明细。以json格式输出，不要遗漏任何一行，不要有任何前后解释文字，所有折扣额取正数部分、四舍五入额保留原符号。（小票上有若干促销折扣行，格式类似 Buy 2 Save $X。折扣金额一律取该行最右侧带负号的数字（例如 -$6.00）。行内左侧的说明文字（如 Buy 2 Save $6）可能包含数字，那些不是金额，请忽略。'
+    prompt_text = ('列出这张小票上的最终支付额、小计、所有折扣额、四舍五入额和商品明细。以json格式输出，不要遗漏任何一行，不要有任何前后解释文字，所有折扣额取正数部分、四舍五入额保留原符号。（小票上有若干促销折扣行，折扣行可能以多种形式出现，凡是该行带负号金额、且不是商品单价的，都要计入折扣额，例如：'
+                    'Buy N Save $X（促销）、MB PRICE（会员价）、x% OFF（百分比折扣）、'
+                    'MB APP UPGRADE / App Upgrad$（App 折扣）、COUPON（优惠券）、'
+                    '包装變形 / 包裝破損 / packaging damage（包装损坏补偿）。'
+                    '特别注意"包装變形""包裝破損"这类行，它们常以中文出现在商品名称下方，金额同样带负号，'
+                    '也属于折扣，不要遗漏。折扣金额一律取该行最右侧带负号的数字（例如 -$6.00）。行内左侧的说明文字（如 Buy 2 Save $6）可能包含数字，那些不是金额，请忽略。'
                     '如果同一行上的两个数字看起来不一致，以最右侧带负号的数字为准。）'
                     '输出样例：{ \"final_amount\": \"123.40\", \"subtotal\": \"150.00\", \"discounts\": [\"26.60\"], \"rounding\": \"0.01\", \"items\": [{\"code\": \"001\", \"name\": \"商品1\", \"quantity\": 2, \"amount\": \"10.00\"}] }')
     model = ChatDeepSeek(
