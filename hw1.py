@@ -66,8 +66,9 @@ def build_chain() -> Any:
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_deepseek import ChatDeepSeek
 
-    prompt_text = ('列出这张小票上的最终支付额、小计、所有折扣额、四舍五入额和商品明细。以json格式输出，不要遗漏任何一行，不要有任何前后解释文字，所有折扣额取正数部分、四舍五入额保留原符号。'
-              '输出样例：{ \"final_amount\": \"123.40\", \"subtotal\": \"150.00\", \"discounts\": [\"26.60\"], \"rounding\": \"0.01\", \"items\": [{\"code\": \"001\", \"name\": \"商品1\", \"quantity\": 2, \"amount\": \"10.00\"}] }')
+    prompt_text = ('列出这张小票上的最终支付额、小计、所有折扣额、四舍五入额和商品明细。以json格式输出，不要遗漏任何一行，不要有任何前后解释文字，所有折扣额取正数部分、四舍五入额保留原符号。（小票上有若干促销折扣行，格式类似 Buy 2 Save $X。折扣金额一律取该行最右侧带负号的数字（例如 -$6.00）。行内左侧的说明文字（如 Buy 2 Save $6）可能包含数字，那些不是金额，请忽略。'
+                    '如果同一行上的两个数字看起来不一致，以最右侧带负号的数字为准。）'
+                    '输出样例：{ \"final_amount\": \"123.40\", \"subtotal\": \"150.00\", \"discounts\": [\"26.60\"], \"rounding\": \"0.01\", \"items\": [{\"code\": \"001\", \"name\": \"商品1\", \"quantity\": 2, \"amount\": \"10.00\"}] }')
     model = ChatDeepSeek(
         model="deepseek-v4-flash-vision-exp",
         temperature=0,
@@ -98,13 +99,56 @@ def answer_queries(chain: Any, images: list[Path]) -> dict[str, Any]:
     """
     ### YOUR CODE HERE
     def money(value):
-        return Decimal(str(value))
+        return Decimal(str(value).replace("$", "").replace(",", "").strip())
+        # return Decimal(str(value))
+
+    def is_consistent(data) -> bool:
+        """这张小票的字段是否自洽"""
+        try:
+            subtotal = money(data["subtotal"])
+            final_amount = money(data["final_amount"])
+            discounts = [money(d) for d in data.get("discounts") or []]
+            rounding = money(data.get("rounding", 0))
+            items = [money(i["amount"]) for i in data.get("items") or []]
+        except Exception:
+            return False
+        return (
+                bool(items)
+                and sum(items) == subtotal + sum(discounts)  # 校验 A
+                and subtotal + rounding == final_amount  # 校验 B
+        )
 
     # ① 每张图变成一次调用的输入
     inputs = [{"receipt": image_data_url(path)} for path in images]
 
     # ② 并行跑（7 张图 → 7 次请求，最多同时 4 个）
-    results = chain.batch(inputs, config={"max_concurrency": 4})
+    # results = chain.batch(inputs, config={"max_concurrency": 4})
+    results = []
+    for attempt in range(3):
+        try:
+            results = chain.batch(inputs, config={"max_concurrency": 4})
+            break
+        except Exception:
+            continue
+
+    # 找出不自洽的，重读一次
+    bad = []
+    for i, raw in enumerate(results):
+        try:
+            data = json.loads(response_text(raw))
+        except Exception:
+            bad.append(i)  # 解析失败也重试
+            continue
+        if not is_consistent(data):
+            bad.append(i)
+
+    if bad:
+        try:
+            repair = chain.batch([inputs[i] for i in bad], config={"max_concurrency": 4})
+            for i, raw in zip(bad, repair):
+                results[i] = raw
+        except Exception:
+            pass
 
     # ③ 逐张解析并累加
     total_paid = Decimal("0")  # 回答 QUERY_1 用
@@ -113,13 +157,16 @@ def answer_queries(chain: Any, images: list[Path]) -> dict[str, Any]:
     for result in results:
         try:
             data = json.loads(response_text(result))
+            subtotal = money(data["subtotal"])
+            final_amount = money(data["final_amount"])
+            discounts = [money(d) for d in data.get("discounts") or []]
         except Exception:
             continue
 
         # 取出 data 里的 subtotal、final_amount、discounts
-        subtotal = money(data["subtotal"])
-        final_amount = money(data["final_amount"])
-        discounts = [money(d) for d in data["discounts"]]
+        # subtotal = money(data["subtotal"])
+        # final_amount = money(data["final_amount"])
+        # discounts = [money(d) for d in data["discounts"]]
 
         # 计算账单花销、不打折花销
         total_paid += final_amount
