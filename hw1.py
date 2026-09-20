@@ -100,6 +100,7 @@ def answer_queries(chain: Any, images: list[Path]) -> dict[str, Any]:
     ### YOUR CODE HERE
     def money(value):
         return Decimal(str(value).replace("$", "").replace(",", "").strip())
+        # return Decimal(str(value))
 
     def is_consistent(data) -> bool:
         """这张小票的字段是否自洽"""
@@ -121,12 +122,14 @@ def answer_queries(chain: Any, images: list[Path]) -> dict[str, Any]:
     inputs = [{"receipt": image_data_url(path)} for path in images]
 
     # ② 并行跑（7 张图 → 7 次请求，最多同时 4 个）
+    # results = chain.batch(inputs, config={"max_concurrency": 4})
     results = []
     for attempt in range(3):
         try:
             results = chain.batch(inputs, config={"max_concurrency": 4})
             break
-        except Exception:
+        except Exception as exc:
+            print(f"[warn] batch attempt {attempt + 1} failed: {type(exc).__name__}: {exc}")
             continue
 
     # 找出不自洽的，重读一次
