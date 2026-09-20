@@ -128,7 +128,8 @@ def answer_queries(chain: Any, images: list[Path]) -> dict[str, Any]:
         try:
             results = chain.batch(inputs, config={"max_concurrency": 4})
             break
-        except Exception:
+        except Exception as exc:
+            print(f"[warn] batch 第 {attempt + 1} 次失败: {type(exc).__name__}: {exc}")
             continue
 
     # 找出不自洽的，重读一次
@@ -154,19 +155,21 @@ def answer_queries(chain: Any, images: list[Path]) -> dict[str, Any]:
     total_paid = Decimal("0")  # 回答 QUERY_1 用
     total_without_discount = Decimal("0")  # 回答 QUERY_2 用
 
-    for result in results:
+    for image, result in zip(images, results):
         try:
             data = json.loads(response_text(result))
             subtotal = money(data["subtotal"])
             final_amount = money(data["final_amount"])
             discounts = [money(d) for d in data.get("discounts") or []]
         except Exception:
+            print(f"[detail] {image.name} PARSE-FAIL")
             continue
 
-        # 取出 data 里的 subtotal、final_amount、discounts
-        # subtotal = money(data["subtotal"])
-        # final_amount = money(data["final_amount"])
-        # discounts = [money(d) for d in data["discounts"]]
+        print(
+            f"[detail] {image.name} final={final_amount} subtotal={subtotal} "
+            f"sum_disc={sum(discounts)} q2={subtotal + sum(discounts)} "
+            f"discs={' '.join(str(d) for d in discounts)}"
+        )
 
         # 计算账单花销、不打折花销
         total_paid += final_amount
